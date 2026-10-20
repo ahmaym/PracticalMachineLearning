@@ -1,0 +1,68 @@
+---
+title: "Practical Machine Learning: Weight Lifting Prediction"
+output: html_document
+---
+
+## Introduction
+
+The goal is to predict the exercise performance class (`classe`) from wearable accelerometer measurements. The five classes are A, B, C, D, and E.
+
+## Data preparation
+
+```{r setup, message=FALSE, warning=FALSE}
+library(caret)
+library(randomForest)
+training <- read.csv("pml-training.csv", na.strings=c("NA", "#DIV/0!", ""))
+testing <- read.csv("pml-testing.csv", na.strings=c("NA", "#DIV/0!", ""))
+metadata <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window")
+metadata <- intersect(metadata, names(training))
+candidates <- setdiff(names(training), c(metadata, "classe"))
+missing_fraction <- vapply(training[candidates], function(x) mean(is.na(x)), numeric(1))
+predictors <- candidates[missing_fraction <= 0.90]
+nzv <- nearZeroVar(training[predictors])
+if(length(nzv)) predictors <- predictors[-nzv]
+predictors <- predictors[vapply(training[predictors], function(x) !anyNA(x), logical(1))]
+train_data <- data.frame(training[, predictors, drop=FALSE], classe=factor(training$classe))
+test_data <- testing[, predictors, drop=FALSE]
+cat("Training rows:", nrow(train_data), "\nPredictors:", length(predictors), "\n")
+table(train_data$classe)
+```
+
+## Model and cross-validation
+
+Random Forest was selected because it can capture nonlinear patterns and interactions. Three-fold cross-validation estimates performance on held-out data.
+
+```{r model, message=FALSE, warning=FALSE}
+set.seed(2026)
+control <- trainControl(method="cv", number=3)
+model <- train(classe ~ ., data=train_data, method="rf", trControl=control, tuneGrid=data.frame(mtry=max(1, floor(sqrt(length(predictors))))), ntree=100, importance=TRUE)
+print(model)
+accuracy <- max(model$results$Accuracy)
+error_rate <- 1 - accuracy
+cat("Cross-validation accuracy:", round(accuracy, 4), "\nEstimated out-of-sample error:", round(error_rate, 4), "\n")
+saveRDS(model, "model.rds")
+```
+
+## Performance
+
+The cross-validation error is an estimate, not a guarantee of future performance.
+
+```{r performance}
+print(model$results[, c("mtry", "Accuracy", "Kappa")])
+plot(model$finalModel, main="Random Forest out-of-bag error")
+```
+
+## Predictions
+
+The following predictions correspond to the 20 unlabeled quiz cases in their original row order.
+
+```{r predictions}
+predictions <- predict(model, newdata=test_data)
+print(predictions)
+writeLines(as.character(predictions), "predictions.txt")
+write.csv(data.frame(problem_id=seq_along(predictions), prediction=as.character(predictions)), "predictions_with_ids.csv", row.names=FALSE)
+```
+
+## Conclusion
+
+The model uses selected sensor measurements to classify exercise performance. Three-fold cross-validation provides an estimate of predictive performance.
